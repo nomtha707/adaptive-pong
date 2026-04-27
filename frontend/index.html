@@ -1,0 +1,234 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>AdaptivePong | Telemetry Engine</title>
+    <style>
+        body {
+            margin: 0;
+            padding: 0;
+            background-color: #121212; /* Minimalist dark aesthetic */
+            color: #e0e0e0;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            height: 100vh;
+            font-family: 'Courier New', Courier, monospace;
+        }
+        canvas {
+            background-color: #1e1e1e;
+            border: 2px solid #333;
+            box-shadow: 0 4px 15px rgba(0,0,0,0.5);
+            cursor: none; /* Hide mouse over canvas */
+        }
+        #status {
+            margin-top: 20px;
+            font-size: 14px;
+            color: #888;
+        }
+    </style>
+</head>
+<body>
+
+    <h2>Adaptive Pong</h2>
+    <canvas id="gameCanvas" width="800" height="400"></canvas>
+    <div id="status">Status: Awaiting Game End...</div>
+
+<script>
+    const canvas = document.getElementById("gameCanvas");
+    const ctx = canvas.getContext("2d");
+    const statusDiv = document.getElementById("status");
+
+    // --- GAME CONSTANTS & STATE ---
+    const WINNING_SCORE = 5;
+    let gameActive = true;
+    
+    const player = { x: 20, y: 150, width: 10, height: 80, score: 0, dy: 0 };
+    const ai = { x: 770, y: 150, width: 10, height: 80, score: 0, speed: 4 };
+    const ball = { x: 400, y: 200, radius: 8, dx: 5, dy: 5, speedMultiplier: 1.0 };
+
+    // --- TELEMETRY TRACKERS ---
+    const sessionStartTime = Date.now();
+    let hits = 0;
+    let misses = 0;
+    let totalReactionTimeMs = 0;
+    let reactionEvents = 0;
+    
+    let ballCrossedCenterTime = null;
+    let playerMovedAfterCross = false;
+
+    // --- CONTROLS ---
+    let lastMouseY = player.y;
+    canvas.addEventListener("mousemove", (e) => {
+        let rect = canvas.getBoundingClientRect();
+        player.y = e.clientY - rect.top - player.height / 2;
+        
+        // Prevent paddle from going out of bounds
+        if (player.y < 0) player.y = 0;
+        if (player.y + player.height > canvas.height) player.y = canvas.height - player.height;
+
+        // Reaction time logic: Player moved paddle while ball is incoming
+        if (ballCrossedCenterTime && !playerMovedAfterCross && ball.dx < 0) {
+            let reactionTime = Date.now() - ballCrossedCenterTime;
+            totalReactionTimeMs += reactionTime;
+            reactionEvents++;
+            playerMovedAfterCross = true;
+        }
+    });
+
+    // --- PHYSICS & LOGIC ---
+    function resetBall() {
+        ball.x = canvas.width / 2;
+        ball.y = canvas.height / 2;
+        ball.dx = -ball.dx; // Serve to the other player
+        ballCrossedCenterTime = null;
+    }
+
+    function update() {
+        if (!gameActive) return;
+
+        // Move Ball
+        ball.x += ball.dx * ball.speedMultiplier;
+        ball.y += ball.dy * ball.speedMultiplier;
+
+        // Wall Collision (Top/Bottom)
+        if (ball.y + ball.radius > canvas.height || ball.y - ball.radius < 0) {
+            ball.dy = -ball.dy;
+        }
+
+        // AI Logic (Simple tracking)
+        if (ai.y + ai.height / 2 < ball.y) ai.y += ai.speed;
+        else ai.y -= ai.speed;
+
+        // Reaction Time Trigger (Ball crosses center going left)
+        if (ball.x < canvas.width / 2 && ball.dx < 0 && !ballCrossedCenterTime) {
+            ballCrossedCenterTime = Date.now();
+            playerMovedAfterCross = false;
+        }
+
+        // Paddle Collision (Player)
+        if (ball.dx < 0 && ball.x - ball.radius < player.x + player.width && 
+            ball.y > player.y && ball.y < player.y + player.height) {
+            ball.dx = -ball.dx;
+            hits++;
+            ballCrossedCenterTime = null; // Reset reaction tracker
+        }
+
+        // Paddle Collision (AI)
+        if (ball.dx > 0 && ball.x + ball.radius > ai.x && 
+            ball.y > ai.y && ball.y < ai.y + ai.height) {
+            ball.dx = -ball.dx;
+        }
+
+        // Scoring & Misses
+        if (ball.x < 0) {
+            ai.score++;
+            misses++;
+            resetBall();
+            checkGameOver();
+        } else if (ball.x > canvas.width) {
+            player.score++;
+            resetBall();
+            checkGameOver();
+        }
+    }
+
+    // --- RENDER LOGIC ---
+    function drawRect(x, y, w, h, color) {
+        ctx.fillStyle = color;
+        ctx.fillRect(x, y, w, h);
+    }
+
+    function drawCircle(x, y, r, color) {
+        ctx.fillStyle = color;
+        ctx.beginPath();
+        ctx.arc(x, y, r, 0, Math.PI * 2, false);
+        ctx.closePath();
+        ctx.fill();
+    }
+
+    function drawText(text, x, y) {
+        ctx.fillStyle = "#e0e0e0";
+        ctx.font = "30px Courier New";
+        ctx.fillText(text, x, y);
+    }
+
+    function draw() {
+        // Clear canvas
+        drawRect(0, 0, canvas.width, canvas.height, "#1e1e1e");
+
+        // Draw Net
+        for (let i = 0; i <= canvas.height; i += 20) {
+            drawRect(canvas.width / 2 - 1, i, 2, 10, "#555");
+        }
+
+        // Draw Paddles & Ball
+        drawRect(player.x, player.y, player.width, player.height, "#fff");
+        drawRect(ai.x, ai.y, ai.width, ai.height, "#fff");
+        drawCircle(ball.x, ball.y, ball.radius, "#fff");
+
+        // Draw Scores
+        drawText(player.score, canvas.width / 4, 50);
+        drawText(ai.score, 3 * canvas.width / 4, 50);
+    }
+
+    // --- GAME LOOP ---
+    function gameLoop() {
+        update();
+        draw();
+        if (gameActive) {
+            requestAnimationFrame(gameLoop);
+        }
+    }
+
+    // --- TELEMETRY PAYLOAD SENDER ---
+    function checkGameOver() {
+        if (player.score >= WINNING_SCORE || ai.score >= WINNING_SCORE) {
+            gameActive = false;
+            sendTelemetry();
+        }
+    }
+
+    async function sendTelemetry() {
+        const sessionDurationSec = (Date.now() - sessionStartTime) / 1000;
+        const playerAccuracy = (hits + misses) === 0 ? 0 : hits / (hits + misses);
+        const avgReactionTime = reactionEvents === 0 ? 0 : totalReactionTimeMs / reactionEvents;
+
+        const payload = {
+            session_id: crypto.randomUUID(),
+            difficulty_level: 1, // Static for MVP
+            ball_speed_multiplier: ball.speedMultiplier,
+            paddle_size_multiplier: 1.0,
+            player_accuracy: parseFloat(playerAccuracy.toFixed(3)),
+            avg_reaction_time_ms: parseFloat(avgReactionTime.toFixed(2)),
+            score: player.score,
+            misses: misses,
+            session_duration_sec: parseFloat(sessionDurationSec.toFixed(1))
+        };
+
+        statusDiv.innerText = "Status: Sending Telemetry Data...";
+        console.log("Sending Data:", payload);
+
+        try {
+            const response = await fetch("http://127.0.0.1:8000/log_session", {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify(payload)
+            });
+            const result = await response.json();
+            statusDiv.innerText = `Status: ${result.message} - Check your CSV!`;
+            statusDiv.style.color = "#4CAF50"; // Green success text
+        } catch (error) {
+            console.error("Error logging telemetry:", error);
+            statusDiv.innerText = "Status: API Error. Is FastAPI running?";
+            statusDiv.style.color = "#f44336"; // Red error text
+        }
+    }
+
+    // Start Game
+    gameLoop();
+</script>
+</body>
+</html>
