@@ -1,4 +1,0 @@
-session_id,difficulty_level,ball_speed_multiplier,paddle_size_multiplier,player_accuracy,avg_reaction_time_ms,score,misses,session_duration_sec
-07443983-a390-401b-afe3-823156cebc8b,1,1.0,1.0,0.615,321.9,1,5,57.7
-5e467d0d-8126-4fab-b776-9800a481fe40,1,0.8,1.0,0.667,406.11,0,5,85.0
-84d42787-d5d2-466a-8fe1-4796fe177b4d,1,0.8,1.0,0.905,228.83,5,4,213.8
