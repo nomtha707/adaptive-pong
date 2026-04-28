@@ -3,87 +3,75 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>AdaptivePong | Telemetry Engine</title>
+    <title>AdaptivePong | AI Loop</title>
     <style>
         body {
-            margin: 0;
-            padding: 0;
-            background-color: #121212; /* Minimalist dark aesthetic */
-            color: #e0e0e0;
-            display: flex;
-            flex-direction: column;
-            align-items: center;
-            justify-content: center;
-            height: 100vh;
-            font-family: 'Courier New', Courier, monospace;
+            margin: 0; padding: 0; background-color: #121212; color: #e0e0e0;
+            display: flex; flex-direction: column; align-items: center;
+            justify-content: center; height: 100vh; font-family: 'Courier New', Courier, monospace;
         }
         canvas {
-            background-color: #1e1e1e;
-            border: 2px solid #333;
-            box-shadow: 0 4px 15px rgba(0,0,0,0.5);
-            cursor: none; /* Hide mouse over canvas */
+            background-color: #1e1e1e; border: 2px solid #333;
+            box-shadow: 0 4px 15px rgba(0,0,0,0.5); cursor: none;
         }
-        #status {
-            margin-top: 20px;
-            font-size: 14px;
-            color: #888;
-        }
+        #status, #ai-stats { margin-top: 10px; font-size: 14px; color: #888; }
+        #ai-stats { color: #03a9f4; font-weight: bold; }
     </style>
 </head>
 <body>
 
     <h2>Adaptive Pong</h2>
+    <div id="ai-stats">AI Difficulty Multiplier: <span id="speed-display">Loading...</span></div>
     <canvas id="gameCanvas" width="800" height="400"></canvas>
-    <div id="status">Status: Awaiting Game End...</div>
+    <div id="status">Status: Connecting to Brain...</div>
 
 <script>
     const canvas = document.getElementById("gameCanvas");
     const ctx = canvas.getContext("2d");
     const statusDiv = document.getElementById("status");
+    const speedDisplay = document.getElementById("speed-display");
 
-    // --- GAME CONSTANTS & STATE ---
     const WINNING_SCORE = 5;
-    let gameActive = true;
+    let gameActive = false;
     
     const player = { x: 20, y: 150, width: 10, height: 80, score: 0, dy: 0 };
     const ai = { x: 770, y: 150, width: 10, height: 80, score: 0, speed: 4 };
     const ball = { x: 400, y: 200, radius: 8, dx: 5, dy: 5, speedMultiplier: 1.0 };
 
-    // --- TELEMETRY TRACKERS ---
-    const sessionStartTime = Date.now();
-    let hits = 0;
-    let misses = 0;
-    let totalReactionTimeMs = 0;
-    let reactionEvents = 0;
-    
-    let ballCrossedCenterTime = null;
-    let playerMovedAfterCross = false;
+    let sessionStartTime;
+    let hits = 0, misses = 0, totalReactionTimeMs = 0, reactionEvents = 0;
+    let ballCrossedCenterTime = null, playerMovedAfterCross = false;
+    let aiBaseSpeed = 1.0; // Remembers what the ML model told us
+    let consecutiveHits = 0; // Tracks hits in the current rally
 
-    // --- CONTROLS ---
-    let lastMouseY = player.y;
+    // We store the player's last stats to ask the AI for the next difficulty
+    let currentSessionStats = {
+        player_accuracy: 0.5, // Baseline start
+        avg_reaction_time_ms: 300.0 // Baseline start
+    };
+
     canvas.addEventListener("mousemove", (e) => {
         let rect = canvas.getBoundingClientRect();
         player.y = e.clientY - rect.top - player.height / 2;
-        
-        // Prevent paddle from going out of bounds
         if (player.y < 0) player.y = 0;
         if (player.y + player.height > canvas.height) player.y = canvas.height - player.height;
 
-        // Reaction time logic: Player moved paddle while ball is incoming
         if (ballCrossedCenterTime && !playerMovedAfterCross && ball.dx < 0) {
-            let reactionTime = Date.now() - ballCrossedCenterTime;
-            totalReactionTimeMs += reactionTime;
+            totalReactionTimeMs += (Date.now() - ballCrossedCenterTime);
             reactionEvents++;
             playerMovedAfterCross = true;
         }
     });
 
-    // --- PHYSICS & LOGIC ---
     function resetBall() {
-        ball.x = canvas.width / 2;
+        ball.x = canvas.width / 2; 
         ball.y = canvas.height / 2;
-        ball.dx = -ball.dx; // Serve to the other player
+        ball.dx = -ball.dx; 
         ballCrossedCenterTime = null;
+        
+        // Reset the rally tension back to the ML baseline
+        consecutiveHits = 0;
+        ball.speedMultiplier = aiBaseSpeed;
     }
 
     function update() {
@@ -98,137 +86,153 @@
             ball.dy = -ball.dy;
         }
 
-        // AI Logic (Simple tracking)
-        if (ai.y + ai.height / 2 < ball.y) ai.y += ai.speed;
+        // AI Movement Logic
+        if (ai.y + ai.height / 2 < ball.y) ai.y += ai.speed; 
         else ai.y -= ai.speed;
 
         // Reaction Time Trigger (Ball crosses center going left)
         if (ball.x < canvas.width / 2 && ball.dx < 0 && !ballCrossedCenterTime) {
-            ballCrossedCenterTime = Date.now();
+            ballCrossedCenterTime = Date.now(); 
             playerMovedAfterCross = false;
         }
 
         // Paddle Collision (Player)
         if (ball.dx < 0 && ball.x - ball.radius < player.x + player.width && 
             ball.y > player.y && ball.y < player.y + player.height) {
-            ball.dx = -ball.dx;
-            hits++;
-            ballCrossedCenterTime = null; // Reset reaction tracker
+            ball.dx = -ball.dx; 
+            hits++; 
+            consecutiveHits++; // Track rally length
+            ballCrossedCenterTime = null; 
         }
 
         // Paddle Collision (AI)
         if (ball.dx > 0 && ball.x + ball.radius > ai.x && 
             ball.y > ai.y && ball.y < ai.y + ai.height) {
             ball.dx = -ball.dx;
+            consecutiveHits++; // Track rally length
+        }
+
+        // --- THE DYNAMIC TENSION MECHANIC ---
+        // If the rally goes past 4 hits, increase speed by 5% every hit
+        if (consecutiveHits > 4) {
+            ball.speedMultiplier = aiBaseSpeed + ((consecutiveHits - 4) * 0.05);
+            // Update the UI in real-time so the player feels the tension!
+            speedDisplay.innerText = ball.speedMultiplier.toFixed(2) + "x (Rally!)";
+            speedDisplay.style.color = "#ff5252"; // Turn text red during high-speed rally
         }
 
         // Scoring & Misses
-        if (ball.x < 0) {
-            ai.score++;
-            misses++;
-            resetBall();
-            checkGameOver();
-        } else if (ball.x > canvas.width) {
-            player.score++;
-            resetBall();
-            checkGameOver();
+        if (ball.x < 0) { 
+            ai.score++; 
+            misses++; 
+            resetBall(); 
+            checkGameOver(); 
+        } 
+        else if (ball.x > canvas.width) { 
+            player.score++; 
+            resetBall(); 
+            checkGameOver(); 
         }
     }
 
-    // --- RENDER LOGIC ---
-    function drawRect(x, y, w, h, color) {
-        ctx.fillStyle = color;
-        ctx.fillRect(x, y, w, h);
-    }
-
-    function drawCircle(x, y, r, color) {
-        ctx.fillStyle = color;
-        ctx.beginPath();
-        ctx.arc(x, y, r, 0, Math.PI * 2, false);
-        ctx.closePath();
-        ctx.fill();
-    }
-
-    function drawText(text, x, y) {
-        ctx.fillStyle = "#e0e0e0";
-        ctx.font = "30px Courier New";
-        ctx.fillText(text, x, y);
-    }
+    function drawRect(x, y, w, h, color) { ctx.fillStyle = color; ctx.fillRect(x, y, w, h); }
+    function drawCircle(x, y, r, color) { ctx.fillStyle = color; ctx.beginPath(); ctx.arc(x, y, r, 0, Math.PI * 2, false); ctx.closePath(); ctx.fill(); }
+    function drawText(text, x, y) { ctx.fillStyle = "#e0e0e0"; ctx.font = "30px Courier New"; ctx.fillText(text, x, y); }
 
     function draw() {
-        // Clear canvas
         drawRect(0, 0, canvas.width, canvas.height, "#1e1e1e");
-
-        // Draw Net
-        for (let i = 0; i <= canvas.height; i += 20) {
-            drawRect(canvas.width / 2 - 1, i, 2, 10, "#555");
-        }
-
-        // Draw Paddles & Ball
+        for (let i = 0; i <= canvas.height; i += 20) drawRect(canvas.width / 2 - 1, i, 2, 10, "#555");
         drawRect(player.x, player.y, player.width, player.height, "#fff");
         drawRect(ai.x, ai.y, ai.width, ai.height, "#fff");
         drawCircle(ball.x, ball.y, ball.radius, "#fff");
-
-        // Draw Scores
         drawText(player.score, canvas.width / 4, 50);
         drawText(ai.score, 3 * canvas.width / 4, 50);
     }
 
-    // --- GAME LOOP ---
     function gameLoop() {
         update();
         draw();
-        if (gameActive) {
-            requestAnimationFrame(gameLoop);
-        }
+        if (gameActive) requestAnimationFrame(gameLoop);
     }
 
-    // --- TELEMETRY PAYLOAD SENDER ---
     function checkGameOver() {
         if (player.score >= WINNING_SCORE || ai.score >= WINNING_SCORE) {
             gameActive = false;
-            sendTelemetry();
+            
+            // Update stats for the next prediction based on how we just played
+            currentSessionStats.player_accuracy = (hits + misses) === 0 ? 0 : hits / (hits + misses);
+            currentSessionStats.avg_reaction_time_ms = reactionEvents === 0 ? 0 : totalReactionTimeMs / reactionEvents;
+            
+            sendTelemetry().then(() => {
+                setTimeout(fetchDifficultyAndStart, 2000); // Wait 2 seconds, then ask AI for new speed and restart
+            });
         }
     }
 
     async function sendTelemetry() {
-        const sessionDurationSec = (Date.now() - sessionStartTime) / 1000;
-        const playerAccuracy = (hits + misses) === 0 ? 0 : hits / (hits + misses);
-        const avgReactionTime = reactionEvents === 0 ? 0 : totalReactionTimeMs / reactionEvents;
-
         const payload = {
             session_id: crypto.randomUUID(),
-            difficulty_level: 1, // Static for MVP
+            difficulty_level: 1, 
             ball_speed_multiplier: ball.speedMultiplier,
             paddle_size_multiplier: 1.0,
-            player_accuracy: parseFloat(playerAccuracy.toFixed(3)),
-            avg_reaction_time_ms: parseFloat(avgReactionTime.toFixed(2)),
+            player_accuracy: parseFloat(currentSessionStats.player_accuracy.toFixed(3)),
+            avg_reaction_time_ms: parseFloat(currentSessionStats.avg_reaction_time_ms.toFixed(2)),
             score: player.score,
             misses: misses,
-            session_duration_sec: parseFloat(sessionDurationSec.toFixed(1))
+            session_duration_sec: parseFloat(((Date.now() - sessionStartTime) / 1000).toFixed(1))
         };
 
-        statusDiv.innerText = "Status: Sending Telemetry Data...";
-        console.log("Sending Data:", payload);
-
+        statusDiv.innerText = "Status: Uploading Telemetry...";
         try {
-            const response = await fetch("http://127.0.0.1:8000/log_session", {
-                method: "POST",
-                headers: { "Content-Type": "application/json" },
-                body: JSON.stringify(payload)
+            await fetch("http://127.0.0.1:8000/log_session", {
+                method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(payload)
             });
-            const result = await response.json();
-            statusDiv.innerText = `Status: ${result.message} - Check your CSV!`;
-            statusDiv.style.color = "#4CAF50"; // Green success text
-        } catch (error) {
-            console.error("Error logging telemetry:", error);
-            statusDiv.innerText = "Status: API Error. Is FastAPI running?";
-            statusDiv.style.color = "#f44336"; // Red error text
-        }
+        } catch (error) { console.error(error); }
     }
 
-    // Start Game
-    gameLoop();
+    // --- THE MLOPS INFERENCE CALL ---
+    async function fetchDifficultyAndStart() {
+        statusDiv.innerText = "Status: Asking AI for next difficulty...";
+        statusDiv.style.color = "#03a9f4";
+        
+        try {
+            const response = await fetch("http://127.0.0.1:8000/predict_difficulty", {
+                method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(currentSessionStats)
+            });
+            const result = await response.json();
+            
+            // Save the AI's prediction as the new baseline
+            aiBaseSpeed = result.suggested_speed_multiplier;
+            
+            // Apply the baseline speed to start the game
+            ball.speedMultiplier = aiBaseSpeed;
+            speedDisplay.innerText = aiBaseSpeed + "x";
+            
+            statusDiv.innerText = `Status: AI adjusted speed based on your stats. Go!`;
+            statusDiv.style.color = "#4CAF50";
+
+        } catch (error) {
+            statusDiv.innerText = "Status: AI Server Offline. Defaulting to 1.0x";
+            aiBaseSpeed = 1.0;
+            ball.speedMultiplier = 1.0;
+        }
+
+        // Reset all metrics for the new match
+        player.score = 0; 
+        ai.score = 0; 
+        hits = 0; 
+        misses = 0; 
+        totalReactionTimeMs = 0; 
+        reactionEvents = 0;
+        consecutiveHits = 0; // Reset our new rally tension tracker
+        
+        sessionStartTime = Date.now();
+        gameActive = true;
+        gameLoop();
+    }
+
+    // Boot up the game by asking the AI for initial difficulty
+    fetchDifficultyAndStart();
 </script>
 </body>
 </html>
