@@ -184,7 +184,7 @@
 
         statusDiv.innerText = "Status: Uploading Telemetry...";
         try {
-            await fetch("http://127.0.0.1:8000/log_session", {
+            await fetch("http://127.0.0.1:8001/log_session", {
                 method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(payload)
             });
         } catch (error) { console.error(error); }
@@ -196,7 +196,7 @@
         statusDiv.style.color = "#03a9f4";
         
         try {
-            const response = await fetch("http://127.0.0.1:8000/predict_difficulty", {
+            const response = await fetch("http://127.0.0.1:8001/predict_difficulty", {
                 method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(currentSessionStats)
             });
             const result = await response.json();
